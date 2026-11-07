@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NavTally GVG Control</title>
+<style>
+  :root { --bg:#14171c; --panel:#1d222a; --line:#2e3541; --txt:#e6e9ee; --mut:#8a93a3;
+          --red:#e5484d; --grn:#30a46c; --amb:#f5a524; --acc:#3e8bff; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--txt); font:14px/1.4 system-ui,Segoe UI,Roboto,sans-serif; }
+  header { display:flex; align-items:center; gap:12px; padding:14px 20px; border-bottom:1px solid var(--line); }
+  header h1 { font-size:17px; margin:0; font-weight:600; flex:1; }
+  .pill { padding:3px 12px; border-radius:99px; font-weight:600; font-size:12px; background:#333b48; }
+  .pill.run { background:var(--grn); color:#06210f; }
+  .pill.dry { background:var(--amb); color:#2b1c00; }
+  main { max-width:1100px; margin:0 auto; padding:16px 20px 30px; display:grid; gap:16px; }
+  .grid { display:grid; gap:16px; grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+  .grid[hidden] { display:none; }
+  @media (max-width:820px){ .grid{ grid-template-columns:1fr; } }
+  .tabs { display:flex; gap:4px; border-bottom:1px solid var(--line); }
+  .tabs button { background:none; border-radius:6px 6px 0 0; padding:8px 20px; color:var(--mut); }
+  .tabs button[aria-selected=true] { background:var(--panel); color:var(--txt); border:1px solid var(--line); border-bottom-color:var(--panel); margin-bottom:-1px; }
+  .dest { display:grid; grid-template-columns:1fr 130px 130px 90px auto; gap:8px; margin-top:8px; }
+  @media (max-width:820px){ .dest{ grid-template-columns:1fr 1fr; } }
+  .dest input { margin-top:0 !important; }
+  button.mini { padding:6px 12px; background:#333b48; font-weight:500; }
+  #add_dest { margin-top:10px; background:var(--acc); }
+  fieldset { background:var(--panel); border:1px solid var(--line); border-radius:8px; margin:0; padding:12px 14px 14px; min-width:0; }
+  legend { padding:0 6px; color:var(--mut); font-size:12px; text-transform:uppercase; letter-spacing:.06em; }
+  label.f { display:block; margin:8px 0 0; color:var(--mut); font-size:12px; }
+  input[type=text], input[type=number], select {
+    width:100%; margin-top:3px; padding:7px 9px; background:#12151a; color:var(--txt);
+    border:1px solid var(--line); border-radius:6px; font:inherit; }
+  input:focus, select:focus { outline:2px solid var(--acc); outline-offset:-1px; }
+  .row { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+  .chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+  .chips label { cursor:pointer; }
+  .chips input { position:absolute; opacity:0; }
+  .chips span { display:inline-block; padding:5px 12px; border:1px solid var(--line); border-radius:6px; background:#12151a; user-select:none; }
+  .chips input:focus-visible + span { outline:2px solid var(--acc); }
+  .red input:checked + span { background:var(--red); border-color:var(--red); color:#fff; }
+  .grn input:checked + span { background:var(--grn); border-color:var(--grn); color:#fff; }
+  .seg { display:flex; gap:0; margin-top:4px; }
+  .seg label { flex:1; text-align:center; cursor:pointer; }
+  .seg input { position:absolute; opacity:0; }
+  .seg span { display:block; padding:8px; border:1px solid var(--line); background:#12151a; }
+  .seg label:first-child span { border-radius:6px 0 0 6px; }
+  .seg label:last-child span { border-radius:0 6px 6px 0; border-left:0; }
+  .seg input:checked + span { background:var(--acc); border-color:var(--acc); color:#fff; font-weight:600; }
+  .seg input:focus-visible + span { outline:2px solid #fff; }
+  .chk { display:flex; align-items:center; gap:8px; margin-top:10px; }
+  .full { grid-column:1 / -1; }
+  .actions { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  button { padding:9px 26px; border:0; border-radius:6px; font:600 14px inherit; font-family:inherit; cursor:pointer; color:#fff; }
+  #start { background:var(--grn); } #stop { background:var(--red); }
+  button:disabled { opacity:.35; cursor:not-allowed; }
+  #err { color:#ff8b8f; min-height:1.2em; flex:1; }
+  .cmd { color:var(--mut); font:12px ui-monospace,Consolas,monospace; word-break:break-all; margin-top:8px; }
+  #log { height:300px; overflow:auto; background:#0c0e12; border:1px solid var(--line); border-radius:6px; padding:8px;
+         font:12px/1.45 ui-monospace,Consolas,monospace; white-space:pre-wrap; margin-top:6px; }
+  .hint { color:var(--mut); font-size:12px; margin-top:6px; }
+  .v5only[hidden] { display:none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>NavTally GVG &rarr; TSL UMD</h1>
+  <span id="pill" class="pill">STOPPED</span>
+</header>
+
+<main>
+  <nav class="tabs" role="tablist">
+    <button type="button" role="tab" id="t_main" aria-selected="true" data-tab="main">Main</button>
+    <button type="button" role="tab" id="t_adv" aria-selected="false" data-tab="adv">Advanced</button>
+  </nav>
+  <div class="grid" id="tab_main">
+  <fieldset>
+    <legend>Mode</legend>
+    <div class="seg" role="radiogroup" aria-label="Run mode">
+      <label><input type="radio" name="mode" value="live" checked><span>Live</span></label>
+      <label><input type="radio" name="mode" value="dry"><span>Dry-run</span></label>
+    </div>
+    <div class="hint">Live sends UDP tally packets. Dry-run connects and logs what would be sent, but transmits nothing.</div>
+    <label class="chk"><input type="checkbox" id="mock"> Use built-in mock frame (offline test, ignores Frame IP)</label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Frame (GV Ethernet Tally)</legend>
+    <div class="row">
+      <label class="f">Frame IP<input type="text" id="frame_ip" placeholder="192.168.0.10" autocomplete="off"></label>
+      <label class="f">Port<input type="number" id="port" value="2012" min="1" max="65535"></label>
+    </div>
+    <label class="f">Network interface for frame communication
+      <select id="frame_bind_sel" data-nic="frame_bind"><option value="">Auto (OS routing)</option></select>
+    </label>
+    <input type="text" id="frame_bind" placeholder="Local IPv4 address" autocomplete="off" hidden>
+    <div class="hint">Choose which suites light red and/or green in the two tally panels. Every suite used is subscribed automatically.</div>
+    <label class="chk"><input type="checkbox" id="all_suites"> Authenticate / subscribe with Suite ALL</label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Red tally (TSL Tally 1)</legend>
+    <label class="f">Suites</label>
+    <div class="chips red" id="red_suites">
+      <label><input type="checkbox" value="1" checked><span>Suite 1</span></label>
+      <label><input type="checkbox" value="2"><span>Suite 2</span></label>
+      <label><input type="checkbox" value="3"><span>Suite 3</span></label>
+      <label><input type="checkbox" value="4"><span>Suite 4</span></label>
+    </div>
+    <label class="f">Buses</label>
+    <div class="chips red" id="red_buses">
+      <label><input type="checkbox" value="ME1"><span>ME1</span></label>
+      <label><input type="checkbox" value="ME2"><span>ME2</span></label>
+      <label><input type="checkbox" value="ME3"><span>ME3</span></label>
+      <label><input type="checkbox" value="ME4"><span>ME4</span></label>
+      <label><input type="checkbox" value="PGM" checked><span>PGM</span></label>
+    </div>
+    <label class="f">Or frame outputs (optional)<input type="text" id="red_out" placeholder="1,2,5-8" autocomplete="off"></label>
+  </fieldset>
+
+  <fieldset>
+    <legend>Green tally (TSL Tally 2)</legend>
+    <label class="f">Suites</label>
+    <div class="chips grn" id="green_suites">
+      <label><input type="checkbox" value="1" checked><span>Suite 1</span></label>
+      <label><input type="checkbox" value="2"><span>Suite 2</span></label>
+      <label><input type="checkbox" value="3"><span>Suite 3</span></label>
+      <label><input type="checkbox" value="4"><span>Suite 4</span></label>
+    </div>
+    <label class="f">Buses</label>
+    <div class="chips grn" id="green_buses">
+      <label><input type="checkbox" value="ME1" checked><span>ME1</span></label>
+      <label><input type="checkbox" value="ME2"><span>ME2</span></label>
+      <label><input type="checkbox" value="ME3"><span>ME3</span></label>
+      <label><input type="checkbox" value="ME4"><span>ME4</span></label>
+      <label><input type="checkbox" value="PGM"><span>PGM</span></label>
+    </div>
+    <label class="f">Or frame outputs (optional)<input type="text" id="green_out" placeholder="3,5-8" autocomplete="off"></label>
+  </fieldset>
+
+  <fieldset>
+    <legend>UDP destination</legend>
+    <div class="row">
+      <label class="f">Host IP<input type="text" id="udp_host" value="127.0.0.1" autocomplete="off"></label>
+      <label class="f">Port<input type="number" id="udp_port" value="9999" min="1" max="65535"></label>
+    </div>
+    <label class="f">Network interface for TSL output
+      <select id="udp_bind_sel" data-nic="udp_bind"><option value="">Auto (OS routing)</option></select>
+    </label>
+    <input type="text" id="udp_bind" placeholder="Local IPv4 address" autocomplete="off" hidden>
+    <label class="f">Protocol
+      <select id="tsl_version">
+        <option value="3.1">TSL UMD V3.1</option>
+        <option value="5">TSL UMD V5.0</option>
+      </select>
+    </label>
+    <div class="v5only" id="screen_wrap" hidden>
+      <label class="f">V5 screen number (65535 = all)
+        <input type="number" id="tsl_screen" value="0" min="0" max="65535">
+      </label>
+      <div class="row">
+        <label class="f">Starting display address
+          <input type="number" id="tsl_start" value="0" min="0" max="65534">
+        </label>
+        <label class="f">Display count
+          <input type="number" id="tsl_count" value="128" min="1" max="65535">
+        </label>
+      </div>
+      <div class="hint">Only displays from the starting address up to start + count &minus; 1 are sent.</div>
+    </div>
+  </fieldset>
+
+  </div>
+  <div class="grid" id="tab_adv" hidden>
+  <fieldset>
+    <legend>Advanced</legend>
+    <div class="row">
+      <label class="f">Address offset<input type="number" id="addr_offset" value="0"></label>
+      <label class="f">Brightness
+        <select id="brightness"><option>0</option><option>1</option><option>2</option><option selected>3</option></select>
+      </label>
+    </div>
+    <div class="row">
+      <label class="f">Label source
+        <select id="label"><option>name</option><option>oled</option><option>panel</option><option>menu</option></select>
+      </label>
+      <label class="f">Counted VPE outputs<input type="text" id="outputs" value="PgmA,PgmB,PgmC,PgmD" autocomplete="off"></label>
+    </div>
+    <label class="chk"><input type="checkbox" id="include_cuts"> Also tally key-cut sources</label>
+  </fieldset>
+
+  <fieldset class="full">
+    <legend>Additional UMD destinations (TSL UDP)</legend>
+    <div class="hint">Every TSL packet is also sent to these hosts, using the protocol, screen and interface chosen on the Main tab.
+      Leave the port empty to use the main UDP port. The main destination plus up to 9 additional hosts = 10 receivers.
+      Give a host a <b>start address</b> to send it only that display (count 1 = a single display, or set a count for a range);
+      leave the start address empty to send it every display.</div>
+    <div id="dests"></div>
+    <button type="button" class="mini" id="add_dest">+ Add host</button>
+    <div class="hint" id="dest_count"></div>
+  </fieldset>
+  </div>
+
+  <fieldset class="full">
+    <legend>Control</legend>
+    <div class="actions">
+      <button id="start">Start</button>
+      <button id="stop" disabled>Stop</button>
+      <div id="err" role="alert"></div>
+    </div>
+    <div class="cmd" id="cmd"></div>
+    <div id="log" aria-live="off" tabindex="0"></div>
+  </fieldset>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const TEXT_IDS = ["frame_ip","port","frame_bind","udp_bind","red_out","green_out","udp_host","udp_port","tsl_version",
+                  "tsl_screen","tsl_start","tsl_count","addr_offset","brightness","label","outputs"];
+const CHECK_IDS = ["mock","all_suites","include_cuts"];
+const MAX_EXTRA = 9;
+
+function showTab(name) {
+  ["main","adv"].forEach(n => { $("tab_" + n).hidden = n !== name; $("t_" + n).setAttribute("aria-selected", n === name); });
+}
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
+
+function destCount() {
+  const n = $("dests").children.length;
+  $("dest_count").textContent = `${n + 1} of 10 hosts in use (main destination + ${n} additional)`;
+  $("add_dest").disabled = running || n >= MAX_EXTRA;
+}
+function addDest(host, port, start, count) {
+  if ($("dests").children.length >= MAX_EXTRA) return;
+  const row = document.createElement("div"); row.className = "dest";
+  row.innerHTML = '<input type="text" class="dh" placeholder="Host IP" autocomplete="off" aria-label="Additional host IP">' +
+                  '<input type="number" class="dp" placeholder="Port (main)" min="1" max="65535" aria-label="Additional host port">' +
+                  '<input type="number" class="ds" placeholder="Start addr (all)" min="0" max="65534" aria-label="Additional host start display address">' +
+                  '<input type="number" class="dc" placeholder="Count (1)" min="1" max="65535" aria-label="Additional host display count">' +
+                  '<button type="button" class="mini">Remove</button>';
+  row.querySelector(".dh").value = host || ""; row.querySelector(".dp").value = port || "";
+  row.querySelector(".ds").value = start || ""; row.querySelector(".dc").value = count || "";
+  row.querySelector("button").onclick = () => { row.remove(); destCount(); if (!running) save(); };
+  $("dests").appendChild(row); destCount();
+}
+$("add_dest").onclick = () => { addDest("", ""); const r = $("dests").lastChild; if (r) r.querySelector(".dh").focus(); };
+let since = 0, running = false;
+
+const busValues = id => [...document.querySelectorAll(`#${id} input:checked`)].map(i => i.value);
+const mode = () => document.querySelector('input[name=mode]:checked').value;
+
+function gather() {
+  const d = { mode: mode(), red: busValues("red_buses"), green: busValues("green_buses"),
+              red_suites: busValues("red_suites").map(Number), green_suites: busValues("green_suites").map(Number) };
+  TEXT_IDS.forEach(i => d[i] = $(i).value.trim());
+  d.udp_extra = [...$("dests").children].map(r => ({ host: r.querySelector(".dh").value.trim(), port: r.querySelector(".dp").value.trim(),
+                                                    start: r.querySelector(".ds").value.trim(), count: r.querySelector(".dc").value.trim() }))
+                  .filter(x => x.host);
+  d.frame_bind = nicValue("frame_bind"); d.udp_bind = nicValue("udp_bind");
+  CHECK_IDS.forEach(i => d[i] = $(i).checked);
+  return d;
+}
+
+function save() {
+  try { localStorage.setItem("navtally", JSON.stringify(gather())); } catch (e) {}
+}
+function load() {
+  let d; try { d = JSON.parse(localStorage.getItem("navtally") || "null"); } catch (e) {}
+  if (!d) return;
+  TEXT_IDS.forEach(i => { if (d[i] !== undefined) $(i).value = d[i]; });
+  CHECK_IDS.forEach(i => { if (d[i] !== undefined) $(i).checked = d[i]; });
+  const m = document.querySelector(`input[name=mode][value=${d.mode === "dry" ? "dry" : "live"}]`);
+  if (m) m.checked = true;
+  [["red_buses","red"],["green_buses","green"]].forEach(([id,k]) => {
+    if (Array.isArray(d[k])) document.querySelectorAll(`#${id} input`).forEach(i => i.checked = d[k].includes(i.value));
+  });
+  if (Array.isArray(d.udp_extra)) d.udp_extra.forEach(x => addDest(x.host, x.port, x.start, x.count));
+  [["red_suites","red_suites"],["green_suites","green_suites"]].forEach(([id,k]) => {
+    if (Array.isArray(d[k])) document.querySelectorAll(`#${id} input`).forEach(i => i.checked = d[k].includes(Number(i.value)));
+  });
+}
+
+function setRunning(r, m) {
+  running = r;
+  $("start").disabled = r; $("stop").disabled = !r;
+  document.querySelectorAll("fieldset input, fieldset select").forEach(e => e.disabled = r);
+  document.querySelectorAll("button.mini").forEach(b => b.disabled = r);
+  destCount();
+  const p = $("pill");
+  p.className = "pill" + (r ? (m === "dry" ? " dry" : " run") : "");
+  p.textContent = r ? (m === "dry" ? "RUNNING (DRY-RUN)" : "RUNNING (LIVE)") : "STOPPED";
+}
+
+// --- network interface pickers (select of detected NICs + "Custom IP..." text box)
+function nicValue(id) {
+  const sel = $(id + "_sel");
+  return sel.value === "__custom__" ? $(id).value.trim() : sel.value;
+}
+function nicSet(id, value) {
+  const sel = $(id + "_sel"), txt = $(id);
+  const has = [...sel.options].some(o => o.value === value && o.value !== "__custom__");
+  sel.value = has ? value : (value ? "__custom__" : "");
+  txt.value = has ? "" : (value || "");
+  txt.hidden = sel.value !== "__custom__";
+}
+async function loadNics(saved) {
+  let list = [];
+  try { list = (await api("/api/interfaces")).interfaces; } catch (e) {}
+  document.querySelectorAll("select[data-nic]").forEach(sel => {
+    sel.length = 1;
+    list.forEach(n => sel.add(new Option(`${n.name} \u2014 ${n.ip}`, n.ip)));
+    sel.add(new Option("Custom IP\u2026", "__custom__"));
+  });
+  ["frame_bind", "udp_bind"].forEach(id => nicSet(id, saved[id] || ""));
+}
+
+function syncV5() { $("screen_wrap").hidden = $("tsl_version").value !== "5"; }
+
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} :
+    { method: "POST", headers: {"Content-Type":"application/json"}, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.statusText);
+  return j;
+}
+
+$("start").onclick = async () => {
+  $("err").textContent = "";
+  if (mode() === "live" && !confirm("Live mode will send UDP tally packets to " +
+        $("udp_host").value + ":" + $("udp_port").value + ". Continue?")) return;
+  try { save(); await api("/api/start", gather()); $("log").textContent = ""; since = 0; await poll(); }
+  catch (e) { $("err").textContent = e.message; }
+};
+$("stop").onclick = async () => {
+  try { await api("/api/stop", {}); await poll(); } catch (e) { $("err").textContent = e.message; }
+};
+
+async function poll() {
+  try {
+    const s = await api("/api/status");
+    setRunning(s.running, mode());
+    $("cmd").textContent = s.cmd ? "python NavTally-GVG.py " + s.cmd : "";
+    const l = await api("/api/log?since=" + since);
+    since = l.next;
+    if (l.lines.length) {
+      const box = $("log"), stick = box.scrollTop + box.clientHeight >= box.scrollHeight - 20;
+      box.textContent += l.lines.join("\n") + "\n";
+      if (box.textContent.length > 200000) box.textContent = box.textContent.slice(-150000);
+      if (stick) box.scrollTop = box.scrollHeight;
+    }
+  } catch (e) { $("pill").className = "pill"; $("pill").textContent = "SERVER UNREACHABLE"; }
+}
+
+document.addEventListener("change", e => { if (!running) save(); if (e.target.id === "tsl_version") syncV5(); });
+let savedCfg = {}; try { savedCfg = JSON.parse(localStorage.getItem("navtally") || "{}") || {}; } catch (e) {}
+document.querySelectorAll("select[data-nic]").forEach(sel => sel.addEventListener("change", () => { $(sel.dataset.nic).hidden = sel.value !== "__custom__"; }));
+load(); loadNics(savedCfg); syncV5(); poll(); setInterval(poll, 700);
+</script>
+</body>
+</html>
