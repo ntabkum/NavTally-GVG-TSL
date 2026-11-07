@@ -2,7 +2,7 @@
 """
 Test with GVG XP Frame V 17.7.0 and V20.1.1
 
-eth_tally_sim.py - Python re-implementation of EthTallyReceiver (GV Ethernet Tally client)
+navtally-gvg.py - Python re-implementation of EthTallyReceiver (GV Ethernet Tally client)
 that forwards the frame's contribution/tally data as a UDP stream.
 
 Behaviour mirrored from EthTallyReceiver.exe:
