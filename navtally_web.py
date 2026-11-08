@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-navtally_web.py - tiny web GUI launcher for NavTally-GVG.py (standard library only).
+navtally_web.py V2 - tiny web GUI launcher for NavTally-GVG.py (standard library only).
 
     python navtally_web.py                 # then open http://127.0.0.1:8080
     python navtally_web.py --web-port 9000 --web-host 0.0.0.0   # reachable from other PCs (no auth!)
@@ -171,11 +171,14 @@ def _extra(d):
                 raise ValueError(f"additional destination {host}: port must be 1-65535")
             host += ":" + port
         start = str(x.get("start", "")).strip()
+        nic = _bind(x, "bind")
         if start:
             count = str(x.get("count", "")).strip() or "1"
             if not (start.isdigit() and count.isdigit()) or not 0 <= int(start) <= 65534 or not 1 <= int(count) <= 65535:
                 raise ValueError(f"additional destination {host}: start address 0-65534 and count 1-65535")
             host += f"@{int(start)}+{int(count)}"
+        if nic:
+            host += "/" + nic
         items.append(host)
     if len(items) > 9:
         raise ValueError("at most 9 additional destinations (10 hosts in total)")

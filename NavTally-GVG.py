@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Test with GVG XP Frame V 17.7.0 and V20.1.1
-
-navtally-gvg.py - Python re-implementation of EthTallyReceiver (GV Ethernet Tally client)
+Test with GVG XP Frame V 17.7.0. - V 20.1.1
+This is Version 2
+eth_tally_sim.py - Python re-implementation of EthTallyReceiver (GV Ethernet Tally client)
 that forwards the frame's contribution/tally data as a UDP stream.
 
 Behaviour mirrored from EthTallyReceiver.exe:
@@ -38,6 +38,8 @@ Network interfaces (PC with several NICs / subnets):
 Multiple receivers: --udp-host/--udp-port is destination 1; --udp-extra host[:port],... adds up to
   9 more, so up to 10 hosts receive the TSL packets. Each extra host can be limited to its own
   displays: host:port@12 = only display 12 (a single display), host@12+4 = displays 12-15.
+  Each destination can also use its own NIC: host:port/10.20.1.15 (extra hosts only; the main
+  destination uses --udp-bind). Extra hosts without /LOCAL_IP use the same NIC as the main output.
 
 Dry run (--dry-run): connect to the frame and work out the tally, log what WOULD be sent,
 but transmit no UDP packets.
@@ -68,9 +70,9 @@ Packet layouts below were taken from the IL of EthTallyReceiver.exe:
   VPEInputContribution   : <VPE Name="ME1" Acquired=..><Input Name="BkgdA">sourceID</Input>...
   VPEOutputContribution  : <VPE Name="ME1"><Output Name="PgmA"><..>key1-fill</..><..>BkgdA</..></Output>
 
-Test cmd line:   python navtally_gvg.py --live --red PGM --green ME1
+Test without hardware:   python eth_tally_sim_fin.py --mock --red PGM --green ME1
 """
-import argparse, json, os, socket, sys, threading, time
+import argparse, ipaddress, json, os, socket, sys, threading, time
 import xml.etree.ElementTree as ET
 
 PORT = 2012
@@ -151,16 +153,20 @@ def suitelist(text):
 
 
 def destlist(text):
-    """'host[:port][@start[+count]],...' -> [(host, port-or-None, lo, hi)], at most 9 extra destinations.
+    """'host[:port][@start[+count]][/localIP],...' -> [(host, port-or-None, lo, hi, nic)], at most 9.
     @start[+count] limits that host to displays start..start+count-1 (count defaults to 1 = a single
-    display); without it the host gets every display."""
+    display); without it the host gets every display. /localIP sends that host's packets from that NIC
+    (without it: the main --udp-bind interface)."""
     out = []
     for part in text.replace(" ", "").split(","):
         if not part or part.lower() == "none":
             continue
+        part, _, nic = part.partition("/")
         spec, _, win = part.partition("@")
         host, _, port = spec.partition(":")
         try:
+            if nic:
+                nic = str(ipaddress.IPv4Address(nic))
             pn = int(port) if port else None
             lo = hi = None
             if win:
@@ -172,8 +178,8 @@ def destlist(text):
             if not host or (pn is not None and not 1 <= pn <= 65535):
                 raise ValueError
         except ValueError:
-            raise argparse.ArgumentTypeError(f"bad destination '{part}' (use host[:port][@start[+count]])")
-        out.append((host, pn, lo, hi))
+            raise argparse.ArgumentTypeError(f"bad destination '{part}' (use host[:port][@start[+count]][/localIP])")
+        out.append((host, pn, lo, hi, nic))
     if len(out) > 9:
         raise argparse.ArgumentTypeError("at most 9 extra destinations (10 hosts in total)")
     return out
@@ -234,16 +240,31 @@ class TallyEngine:
     def __init__(self, a, log, udp):
         self.a, self.log, self.udp = a, log, udp
         self.tos, self.udp_err = [], set()    # TSL destinations (main + up to 9 extra)
-        for h, p, lo, hi in [(a.udp_host, a.udp_port, None, None)] + list(a.udp_extra):
+        socks = {a.udp_bind: udp}             # local NIC address -> UDP socket ("" = OS routing)
+        for h, p, lo, hi, nic in [(a.udp_host, a.udp_port, None, None, "")] + list(a.udp_extra):
+            nic = nic or a.udp_bind           # no NIC given: same interface as the main TSL output
             try:
-                dest = (socket.gethostbyname(h), p, lo, hi)
+                ip = socket.gethostbyname(h)
             except OSError as e:
                 log(f"TSL destination {h}:{p} not resolved ({e}); skipped")
                 continue
-            if dest not in self.tos:
+            if nic not in socks:              # one socket per NIC, bound to that NIC's address
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                try:
+                    s.bind((nic, 0))
+                except OSError as e:
+                    s.close()
+                    log(f"TSL destination {h}:{p}: cannot bind to interface {nic} ({e}); skipped")
+                    continue
+                socks[nic] = s
+            dest = (ip, p, lo, hi, nic, socks[nic])
+            if dest[:5] not in [d[:5] for d in self.tos]:
                 self.tos.append(dest)
+        self.extra_socks = [s for s in socks.values() if s is not udp]
         log("TSL destinations: " + ", ".join(
-            f"{h}:{p}" + ("" if lo is None else f" (displays {lo}-{hi})") for h, p, lo, hi in self.tos))
+            f"{h}:{p}" + ("" if lo is None else f" (displays {lo}-{hi})") + (f" via {nic}" if nic else "")
+            for h, p, lo, hi, nic, _ in self.tos))
         self.red, self.green = set(a.red), set(a.green)
         self.red_suites, self.green_suites = set(a.red_suites), set(a.green_suites)
         self.suites = self.red_suites | self.green_suites
@@ -267,11 +288,11 @@ class TallyEngine:
     def send_udp(self, addr, pkt):
         """Send one TSL packet (display `addr`) to every destination whose display window includes it;
         one bad host must not block the others."""
-        for h, p, lo, hi in self.tos:
+        for h, p, lo, hi, _nic, sock in self.tos:
             if lo is not None and not lo <= addr <= hi:
                 continue
             try:
-                self.udp.sendto(pkt, (h, p))
+                sock.sendto(pkt, (h, p))
             except OSError as e:
                 if (h, p) not in self.udp_err:
                     self.udp_err.add((h, p))
@@ -720,10 +741,11 @@ def main():
                    help="local IPv4 address (NIC) to send the TSL UDP packets from; default: OS routing")
     p.add_argument("--udp-host", default="127.0.0.1")
     p.add_argument("--udp-port", type=int, default=9999)
-    p.add_argument("--udp-extra", type=destlist, default=[], metavar="HOST[:PORT][@START[+COUNT]],...",
+    p.add_argument("--udp-extra", type=destlist, default=[], metavar="HOST[:PORT][@START[+COUNT]][/LOCAL_IP],...",
                    help="additional TSL UDP destinations (up to 9; with --udp-host that is 10 hosts). "
                         "Port defaults to --udp-port. @START[+COUNT] sends that host only displays "
-                        "START..START+COUNT-1 (COUNT defaults to 1, a single display)")
+                        "START..START+COUNT-1 (COUNT defaults to 1, a single display). "
+                        "/LOCAL_IP sends to that host from that NIC (default: --udp-bind)")
     p.add_argument("--heartbeat", type=float, default=5.0, help="heartbeat period, s")
     p.add_argument("--proto-version", default="3.0")
     p.add_argument("--suite", type=int, choices=[1, 2, 3, 4], default=1,
@@ -774,7 +796,7 @@ def main():
         p.error("--tsl-start must be 0-65534")
     if not 1 <= a.tsl_count <= 65535:
         p.error("--tsl-count must be 1-65535")
-    a.udp_extra = [(h, p or a.udp_port, lo, hi) for h, p, lo, hi in a.udp_extra]
+    a.udp_extra = [(h, p or a.udp_port, lo, hi, nic) for h, p, lo, hi, nic in a.udp_extra]
     if a.red_suites is None:
         a.red_suites = [a.suite]
     if a.green_suites is None:

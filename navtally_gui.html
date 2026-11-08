@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>NavTally GVG Control</title>
+<title>NavTally GVG Control V2</title>
 <style>
   :root { --bg:#14171c; --panel:#1d222a; --line:#2e3541; --txt:#e6e9ee; --mut:#8a93a3;
           --red:#e5484d; --grn:#30a46c; --amb:#f5a524; --acc:#3e8bff; }
@@ -21,8 +21,9 @@
   .tabs { display:flex; gap:4px; border-bottom:1px solid var(--line); }
   .tabs button { background:none; border-radius:6px 6px 0 0; padding:8px 20px; color:var(--mut); }
   .tabs button[aria-selected=true] { background:var(--panel); color:var(--txt); border:1px solid var(--line); border-bottom-color:var(--panel); margin-bottom:-1px; }
-  .dest { display:grid; grid-template-columns:1fr 130px 130px 90px auto; gap:8px; margin-top:8px; }
+  .dest { display:grid; grid-template-columns:1fr 90px 100px 80px 1.2fr auto; gap:8px; margin-top:8px; }
   @media (max-width:820px){ .dest{ grid-template-columns:1fr 1fr; } }
+  .dest .db { min-width:0; }
   .dest input { margin-top:0 !important; }
   button.mini { padding:6px 12px; background:#333b48; font-weight:500; }
   #add_dest { margin-top:10px; background:var(--acc); }
@@ -65,7 +66,7 @@
 </head>
 <body>
 <header>
-  <h1>NavTally GVG &rarr; TSL UMD</h1>
+  <h1>NavTally GVG &rarr; TSL UMD V2</h1>
   <span id="pill" class="pill">STOPPED</span>
 </header>
 
@@ -139,6 +140,8 @@
     <label class="f">Or frame outputs (optional)<input type="text" id="green_out" placeholder="3,5-8" autocomplete="off"></label>
   </fieldset>
 
+  </div>
+  <div class="grid" id="tab_adv" hidden>
   <fieldset>
     <legend>UDP destination</legend>
     <div class="row">
@@ -171,8 +174,6 @@
     </div>
   </fieldset>
 
-  </div>
-  <div class="grid" id="tab_adv" hidden>
   <fieldset>
     <legend>Advanced</legend>
     <div class="row">
@@ -192,10 +193,12 @@
 
   <fieldset class="full">
     <legend>Additional UMD destinations (TSL UDP)</legend>
-    <div class="hint">Every TSL packet is also sent to these hosts, using the protocol, screen and interface chosen on the Main tab.
+    <div class="hint">Every TSL packet is also sent to these hosts, using the protocol, screen and interface chosen in the UDP destination panel above.
       Leave the port empty to use the main UDP port. The main destination plus up to 9 additional hosts = 10 receivers.
       Give a host a <b>start address</b> to send it only that display (count 1 = a single display, or set a count for a range);
-      leave the start address empty to send it every display.</div>
+      leave the start address empty to send it every display.
+      Each host can also use its own <b>network interface</b> (pick a detected NIC or type a local IP); empty = the same interface as the main TSL output.</div>
+    <datalist id="nic_list"></datalist>
     <div id="dests"></div>
     <button type="button" class="mini" id="add_dest">+ Add host</button>
     <div class="hint" id="dest_count"></div>
@@ -231,16 +234,18 @@ function destCount() {
   $("dest_count").textContent = `${n + 1} of 10 hosts in use (main destination + ${n} additional)`;
   $("add_dest").disabled = running || n >= MAX_EXTRA;
 }
-function addDest(host, port, start, count) {
+function addDest(host, port, start, count, bind) {
   if ($("dests").children.length >= MAX_EXTRA) return;
   const row = document.createElement("div"); row.className = "dest";
   row.innerHTML = '<input type="text" class="dh" placeholder="Host IP" autocomplete="off" aria-label="Additional host IP">' +
                   '<input type="number" class="dp" placeholder="Port (main)" min="1" max="65535" aria-label="Additional host port">' +
                   '<input type="number" class="ds" placeholder="Start addr (all)" min="0" max="65534" aria-label="Additional host start display address">' +
                   '<input type="number" class="dc" placeholder="Count (1)" min="1" max="65535" aria-label="Additional host display count">' +
+                  '<input type="text" class="db" list="nic_list" placeholder="NIC (same as main)" autocomplete="off" aria-label="Additional host network interface">' +
                   '<button type="button" class="mini">Remove</button>';
   row.querySelector(".dh").value = host || ""; row.querySelector(".dp").value = port || "";
   row.querySelector(".ds").value = start || ""; row.querySelector(".dc").value = count || "";
+  row.querySelector(".db").value = bind || "";
   row.querySelector("button").onclick = () => { row.remove(); destCount(); if (!running) save(); };
   $("dests").appendChild(row); destCount();
 }
@@ -255,7 +260,8 @@ function gather() {
               red_suites: busValues("red_suites").map(Number), green_suites: busValues("green_suites").map(Number) };
   TEXT_IDS.forEach(i => d[i] = $(i).value.trim());
   d.udp_extra = [...$("dests").children].map(r => ({ host: r.querySelector(".dh").value.trim(), port: r.querySelector(".dp").value.trim(),
-                                                    start: r.querySelector(".ds").value.trim(), count: r.querySelector(".dc").value.trim() }))
+                                                    start: r.querySelector(".ds").value.trim(), count: r.querySelector(".dc").value.trim(),
+                                                    bind: r.querySelector(".db").value.trim() }))
                   .filter(x => x.host);
   d.frame_bind = nicValue("frame_bind"); d.udp_bind = nicValue("udp_bind");
   CHECK_IDS.forEach(i => d[i] = $(i).checked);
@@ -275,7 +281,7 @@ function load() {
   [["red_buses","red"],["green_buses","green"]].forEach(([id,k]) => {
     if (Array.isArray(d[k])) document.querySelectorAll(`#${id} input`).forEach(i => i.checked = d[k].includes(i.value));
   });
-  if (Array.isArray(d.udp_extra)) d.udp_extra.forEach(x => addDest(x.host, x.port, x.start, x.count));
+  if (Array.isArray(d.udp_extra)) d.udp_extra.forEach(x => addDest(x.host, x.port, x.start, x.count, x.bind));
   [["red_suites","red_suites"],["green_suites","green_suites"]].forEach(([id,k]) => {
     if (Array.isArray(d[k])) document.querySelectorAll(`#${id} input`).forEach(i => i.checked = d[k].includes(Number(i.value)));
   });
@@ -312,6 +318,8 @@ async function loadNics(saved) {
     list.forEach(n => sel.add(new Option(`${n.name} \u2014 ${n.ip}`, n.ip)));
     sel.add(new Option("Custom IP\u2026", "__custom__"));
   });
+  const dl = $("nic_list"); dl.textContent = "";
+  list.forEach(n => { const o = new Option(n.name, n.ip); dl.appendChild(o); });
   ["frame_bind", "udp_bind"].forEach(id => nicSet(id, saved[id] || ""));
 }
 
